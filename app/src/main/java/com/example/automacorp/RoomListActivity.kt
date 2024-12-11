@@ -3,14 +3,14 @@ package com.example.automacorp
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
@@ -35,11 +35,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.core.content.ContextCompat.startActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.example.automacorp.model.RoomDto
-import com.example.automacorp.model.RoomService
+import com.example.automacorp.model.RoomViewModel
+import com.example.automacorp.service.ApiServices
 import com.example.automacorp.ui.theme.AutomacorpTheme
 import com.example.automacorp.ui.theme.PurpleGrey80
 
@@ -47,39 +53,82 @@ class RoomListActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        // ViewModel initialization
+        val viewModel: RoomViewModel by viewModels()
+
         setContent {
-            AutomacorpTheme {
-                Scaffold(
-                    topBar = {
-                        AutomacorpTopAppBar(
-                            title = "Rooms",
-                            returnAction = { finish() } // This will return to the previous screen when the back button is pressed
-                        )
-                    },
-                    modifier = Modifier.fillMaxSize()
-                ) { innerPadding ->
-                    RoomListScreen(innerPadding)
-                }
+            // Collecting the state from the ViewModel using `collectAsState()`
+            val roomsState by viewModel.roomsState.collectAsState()
+
+            // Launching the request to load rooms in the background
+            LaunchedEffect(Unit) {
+                viewModel.findAll() // Fetch rooms using the ViewModel
+            }
+
+            // Checking if there's an error and showing the appropriate UI
+            if (roomsState.error != null) {
+                // Show an empty list in case of an error
+                RoomList(
+                    rooms = emptyList(),
+                    navigateBack = { finish() },
+                    openRoom = { openRoom(it) }
+                )
+                Toast.makeText(
+                    applicationContext,
+                    "Error on rooms loading: ${roomsState.error}",
+                    Toast.LENGTH_LONG
+                ).show()
+            } else {
+                // Show the list of rooms when successfully loaded
+                RoomList(
+                    rooms = roomsState.rooms,
+                    navigateBack = { finish() },
+                    openRoom = { openRoom(it) }
+                )
             }
         }
+    }
+
+    // Method to open RoomDetailActivity with room ID
+    private fun openRoom(roomId: Long) {
+        val intent = Intent(this, RoomDetailActivity::class.java).apply {
+            putExtra(RoomDetailActivity.ROOM_ID, roomId)
+        }
+        startActivity(intent)
     }
 }
 
 @Composable
-fun RoomListScreen(innerPadding: PaddingValues) {
-    val context = LocalContext.current // Get the context
-
-    LazyColumn(
-        contentPadding = PaddingValues(4.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.padding(innerPadding),
-    ) {
-        val rooms = RoomService.findAll() // Fetch all rooms from the service
-        items(rooms, key = { it.id }) { room ->
-            RoomItem(
-                room = room,
-                modifier = Modifier.clickable { openRoom(context, room.id) } // Pass context to openRoom
-            )
+fun RoomList(
+    rooms: List<RoomDto>,
+    navigateBack: () -> Unit,
+    openRoom: (id: Long) -> Unit
+) {
+    AutomacorpTheme {
+        Scaffold(
+            topBar = { AutomacorpTopAppBar(title = "Rooms", returnAction = navigateBack) }
+        ) { innerPadding ->
+            if (rooms.isEmpty()) {
+                Text(
+                    text = "No rooms found",
+                    modifier = Modifier.padding(innerPadding)
+                )
+            } else {
+                LazyColumn(
+                    contentPadding = PaddingValues(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(innerPadding),
+                ) {
+                    items(rooms, key = { it.id }) {
+                        RoomItem(
+                            room = it,
+                            modifier = Modifier.clickable { openRoom(it.id) }
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -101,12 +150,12 @@ fun RoomItem(room: RoomDto, modifier: Modifier = Modifier) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Target temperature : " + (room.targetTemperature?.toString() ?: "?") + "°",
+                    text = "Target temperature: ${room.targetTemperature?.toString() ?: "?"}°",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
             Text(
-                text = (room.currentTemperature?.toString() ?: "?") + "°",
+                text = "${room.currentTemperature?.toString() ?: "?"}°",
                 style = MaterialTheme.typography.headlineLarge,
                 textAlign = TextAlign.Right,
                 modifier = Modifier.fillMaxSize()
@@ -115,39 +164,24 @@ fun RoomItem(room: RoomDto, modifier: Modifier = Modifier) {
     }
 }
 
-fun openRoom(context: Context, roomId: Long) {
-    val intent = Intent(context, RoomDetailActivity::class.java).apply {
-        putExtra(RoomDetailActivity.ROOM_ID, roomId) // Pass the room ID
-    }
-    startActivity(context, intent, null) // Correct usage of startActivity with context
-}
-
-@Preview(showBackground = true)
-@Composable
-fun RoomListScreenPreview() {
-    AutomacorpTheme {
-        RoomListScreen(innerPadding = PaddingValues(16.dp)) // Mock preview of the list
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AutomacorpTopAppBar(
     title: String,
-    returnAction: () -> Unit = {},
+    returnAction: () -> Unit = {}
 ) {
     TopAppBar(
         title = { Text(text = title) },
         navigationIcon = {
-            IconButton(onClick = { returnAction() }) {
+            IconButton(onClick = returnAction) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
             }
         },
         actions = {},
-        colors = TopAppBarDefaults.smallTopAppBarColors(
-            containerColor = Color.White
-        )
+        colors = TopAppBarDefaults.smallTopAppBarColors(containerColor = Color.White)
     )
 }
+
+
 
 
